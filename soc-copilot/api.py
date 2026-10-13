@@ -2,20 +2,26 @@
 api.py - FastAPI backend for SOC Copilot.
 
 Endpoints:
-  GET  /incidents           - ranked incident list + summary stats
-  GET  /incidents/{id}      - full incident detail
-  POST /actions/{id}/decision - approve or reject an action
-  POST /actions/{id}/execute  - execute (simulated) if approved, 403 otherwise
-  GET  /audit               - audit log newest first
+  GET  /incidents              - ranked incident list + summary stats
+  GET  /incidents/{id}         - full incident detail (includes summary_stale)
+  POST /incidents/{id}/summary - trigger LLM summary
+  POST /actions/{id}/decision  - approve or reject (validates action belongs to incident)
+  POST /actions/{id}/execute   - execute (simulated); checks anchor stability
+  GET  /audit                  - audit log newest first
+  POST /alerts                 - add a manual alert, rebuild pipeline
+  GET  /alerts                 - list all alerts (seeded + manual)
+  DELETE /alerts/{id}          - remove a manual alert
 """
+import ipaddress
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 import actions as actions_module
 import db
@@ -23,13 +29,14 @@ import llm as llm_module
 import pipeline as pipeline_module
 import validator as validator_module
 
+
 @asynccontextmanager
 async def lifespan(app):
     db.init_db()
     yield
 
 
-app = FastAPI(title="SOC Copilot API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="SOC Copilot API", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,7 +47,7 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Pipeline cache (reloaded on each startup; data files rarely change)
+# Pipeline cache — invalidated on alert add/remove
 # ---------------------------------------------------------------------------
 
 _pipeline_cache: Optional[dict] = None
@@ -53,6 +60,13 @@ def _get_pipeline() -> dict:
     return _pipeline_cache
 
 
+def _invalidate_pipeline() -> None:
+    """Invalidate both the api-level cache and the pipeline module cache."""
+    global _pipeline_cache
+    _pipeline_cache = None
+    pipeline_module.invalidate_pipeline_cache()
+
+
 def _get_incident_by_id(inc_id: str) -> Optional[dict]:
     result = _get_pipeline()
     for inc in result["incidents"]:
@@ -63,11 +77,32 @@ def _get_incident_by_id(inc_id: str) -> Optional[dict]:
 
 def _get_assets() -> dict:
     """Load assets for action card generation."""
-    from pipeline import load_json
     try:
-        return load_json("assets.json").get("assets", {})
+        return pipeline_module.load_json("assets.json").get("assets", {})
     except Exception:
         return {}
+
+
+def _incident_list_payload(result: dict) -> dict:
+    """Serialize the incident list + stats for GET /incidents and POST /alerts response."""
+    incidents = result["incidents"]
+    stats = result["stats"]
+    incident_list = []
+    for inc in incidents:
+        incident_list.append({
+            "id": inc["id"],
+            "score": inc["score"],
+            "label": inc["label"],
+            "reasons": inc["reasons"],
+            "alert_count": len(inc["alert_ids"]),
+            "alert_ids": inc["alert_ids"],
+            "entities": inc["entities"],
+            "sources": inc["sources"],
+            "earliest": inc["earliest"],
+            "latest": inc["latest"],
+            "top_reason": inc["reasons"][0] if inc["reasons"] else None,
+        })
+    return {"incidents": incident_list, "stats": stats}
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +110,7 @@ def _get_assets() -> dict:
 # ---------------------------------------------------------------------------
 
 ALLOWED_DECISIONS = {"approved", "rejected"}
+ALLOWED_SOURCES = {"siem", "edr", "identity", "cloud"}
 
 
 class DecisionRequest(BaseModel):
@@ -97,36 +133,125 @@ class DecisionRequest(BaseModel):
         return v.strip()
 
 
+def _empty_to_none(v: Optional[str]) -> Optional[str]:
+    if v is None or v.strip() == "":
+        return None
+    return v.strip()
+
+
+class AlertRequest(BaseModel):
+    source: str
+    severity: int
+    timestamp: Optional[str] = None
+    user: Optional[str] = None
+    host: Optional[str] = None
+    ip: Optional[str] = None
+    resource: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    raw: Optional[str] = None
+    analyst: str
+
+    @field_validator("source")
+    @classmethod
+    def source_must_be_valid(cls, v: str) -> str:
+        if v not in ALLOWED_SOURCES:
+            raise ValueError(f"source must be one of {sorted(ALLOWED_SOURCES)}")
+        return v
+
+    @field_validator("severity")
+    @classmethod
+    def severity_must_be_1_to_4(cls, v: int) -> int:
+        if v not in (1, 2, 3, 4):
+            raise ValueError("severity must be an integer 1-4")
+        return v
+
+    @field_validator("title")
+    @classmethod
+    def title_required_and_max(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("title is required")
+        if len(v) > 200:
+            raise ValueError("title must be at most 200 characters")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def description_max(cls, v: Optional[str]) -> Optional[str]:
+        v = _empty_to_none(v)
+        if v and len(v) > 2000:
+            raise ValueError("description must be at most 2000 characters")
+        return v
+
+    @field_validator("raw")
+    @classmethod
+    def raw_max(cls, v: Optional[str]) -> Optional[str]:
+        v = _empty_to_none(v)
+        if v and len(v) > 4000:
+            raise ValueError("raw must be at most 4000 characters")
+        return v
+
+    @field_validator("user", "host", "resource")
+    @classmethod
+    def entity_max(cls, v: Optional[str]) -> Optional[str]:
+        v = _empty_to_none(v)
+        if v and len(v) > 200:
+            raise ValueError("field must be at most 200 characters")
+        return v
+
+    @field_validator("ip")
+    @classmethod
+    def ip_valid(cls, v: Optional[str]) -> Optional[str]:
+        v = _empty_to_none(v)
+        if v is None:
+            return None
+        if len(v) > 200:
+            raise ValueError("ip must be at most 200 characters")
+        try:
+            ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f"ip '{v}' is not a valid IPv4 or IPv6 address")
+        return v
+
+    @field_validator("analyst")
+    @classmethod
+    def analyst_required(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("analyst is required and must not be empty")
+        return v
+
+    @field_validator("timestamp")
+    @classmethod
+    def timestamp_valid(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        v = v.strip()
+        # Validate ISO 8601 by parsing
+        try:
+            datetime.fromisoformat(v.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError(f"timestamp '{v}' is not valid ISO 8601")
+        return v
+
+    @model_validator(mode="after")
+    def at_least_one_entity(self) -> "AlertRequest":
+        if not any([self.user, self.host, self.ip, self.resource]):
+            raise ValueError(
+                "at least one of user, host, ip, resource must be provided "
+                "for the alert to be correlatable"
+            )
+        return self
+
+
 # ---------------------------------------------------------------------------
 # GET /incidents
 # ---------------------------------------------------------------------------
 
 @app.get("/incidents")
 def list_incidents() -> dict:
-    result = _get_pipeline()
-    incidents = result["incidents"]
-    stats = result["stats"]
-
-    incident_list = []
-    for inc in incidents:
-        incident_list.append({
-            "id": inc["id"],
-            "score": inc["score"],
-            "label": inc["label"],
-            "reasons": inc["reasons"],
-            "alert_count": len(inc["alert_ids"]),
-            "alert_ids": inc["alert_ids"],
-            "entities": inc["entities"],
-            "sources": inc["sources"],
-            "earliest": inc["earliest"],
-            "latest": inc["latest"],
-            "top_reason": inc["reasons"][0] if inc["reasons"] else None,
-        })
-
-    return {
-        "incidents": incident_list,
-        "stats": stats,
-    }
+    return _incident_list_payload(_get_pipeline())
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +264,8 @@ def get_incident(inc_id: str) -> dict:
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {inc_id} not found")
 
-    # Load summary from cache only — don't block on LLM call
-    summary = llm_module.load_cached_summary(inc_id)
+    # Load summary — pass incident for stale-detection
+    summary = llm_module.load_cached_summary(inc_id, incident=inc)
 
     # Validation result
     validation = None
@@ -158,16 +283,10 @@ def get_incident(inc_id: str) -> dict:
     playbooks = _get_pipeline()["playbooks"]
     assets = _get_assets()
 
-    # Build action cards with live DB status
-    action_cards = actions_module.build_actions(
-        incident=inc,
-        playbook_name=playbook_name,
-        playbooks=playbooks,
-        db_get_action_status=db.get_approval,
-        assets=assets,
-    )
+    # Build action cards with live DB status, passing anchor for validity check
+    action_cards = _build_action_cards_with_anchor(inc, playbook_name, playbooks, assets)
 
-    # Context cards: user, asset, threat intel (None shown as-is, not invented)
+    # Context cards
     context = _build_context(inc)
 
     return {
@@ -180,6 +299,7 @@ def get_incident(inc_id: str) -> dict:
         "sources": inc["sources"],
         "earliest": inc["earliest"],
         "latest": inc["latest"],
+        "anchor": inc.get("anchor"),
         "alerts": [
             {
                 "id": a["id"],
@@ -188,10 +308,11 @@ def get_incident(inc_id: str) -> dict:
                 "severity": a["severity"],
                 "title": a["title"],
                 "description": a["description"],
-                "raw": a["raw"],
+                "raw": a.get("raw"),
                 "user": a.get("user"),
                 "host": a.get("host"),
                 "ip": a.get("ip"),
+                "origin": a.get("origin", "seeded"),
             }
             for a in inc["alerts"]
         ],
@@ -201,6 +322,67 @@ def get_incident(inc_id: str) -> dict:
         "playbook": playbook_name,
         "action_cards": action_cards,
     }
+
+
+def _build_action_cards_with_anchor(
+    inc: dict,
+    playbook_name: Optional[str],
+    playbooks: dict,
+    assets: dict,
+) -> list[dict]:
+    """
+    Build action cards, checking anchor stability for each.
+    If a stored approval's anchor doesn't match current, status is shown as
+    'pending' with an approval_invalidated_reason.
+    """
+    current_anchor = inc.get("anchor")
+
+    def _get_status_with_anchor(action_id: str) -> tuple[str, Optional[str]]:
+        row = db.get_approval(action_id)
+        if not row:
+            return "pending", None
+        decision = row.get("decision", "pending")
+        stored_anchor = row.get("incident_anchor")
+        # Legacy NULL anchor — treat as pending
+        if stored_anchor is None:
+            return "pending", "legacy approval (no anchor stored)"
+        if stored_anchor != current_anchor:
+            return "pending", "approval no longer matches incident (alerts changed)"
+        return decision, None
+
+    playbook = playbooks.get(playbook_name) if playbook_name else None
+    if not playbook:
+        return []
+
+    inc_id = inc["id"]
+    cards: list[dict] = []
+
+    for step in playbook.get("steps", []):
+        step_id = step["id"]
+        action_id = f"{inc_id}-{step_id}"
+
+        target = actions_module._resolve_target(step, inc)
+        status, invalidation_reason = _get_status_with_anchor(action_id)
+        warnings = actions_module._generate_warnings(step, inc, assets)
+
+        card = {
+            "action_id": action_id,
+            "step_id": step_id,
+            "action": step["action"],
+            "target_field": step.get("target_field"),
+            "target": target,
+            "impact": step["impact"],
+            "risk": step["risk"],
+            "status": status,
+            "warnings": warnings,
+            "playbook": playbook_name,
+        }
+        if invalidation_reason:
+            card["approval_invalidated_reason"] = invalidation_reason
+
+        cards.append(card)
+
+    return cards
 
 
 def _build_context(inc: dict) -> dict:
@@ -236,18 +418,71 @@ def _build_context(inc: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# POST /incidents/{inc_id}/summary  (trigger LLM call)
+# ---------------------------------------------------------------------------
+
+@app.post("/incidents/{inc_id}/summary")
+def trigger_summary(inc_id: str) -> dict:
+    """
+    Trigger an LLM summary generation for an incident.
+    This may block briefly. Cache is populated on completion.
+    """
+    inc = _get_incident_by_id(inc_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {inc_id} not found")
+
+    playbook_name = actions_module.pick_playbook(inc)
+    summary = llm_module.get_summary(inc, rule_based_playbook=playbook_name)
+    # After regeneration, summary is fresh — not stale
+    summary = dict(summary)
+    summary["summary_stale"] = False
+    return {"inc_id": inc_id, "summary": summary}
+
+
+# ---------------------------------------------------------------------------
 # POST /actions/{action_id}/decision
 # ---------------------------------------------------------------------------
 
 @app.post("/actions/{action_id}/decision")
 def post_decision(action_id: str, body: DecisionRequest) -> dict:
-    # Write to DB
+    """
+    Record an approve/reject decision.
+    Validates that action_id belongs to a current incident — 404 if not.
+    Stores the incident anchor for stable approval tracking.
+    """
+    # Find which incident owns this action_id
+    result = _get_pipeline()
+    owning_incident = None
+    for inc in result["incidents"]:
+        inc_id = inc["id"]
+        playbook_name = actions_module.pick_playbook(inc)
+        if playbook_name:
+            playbooks = result["playbooks"]
+            playbook = playbooks.get(playbook_name)
+            if playbook:
+                for step in playbook.get("steps", []):
+                    if f"{inc_id}-{step['id']}" == action_id:
+                        owning_incident = inc
+                        break
+        if owning_incident:
+            break
+
+    if owning_incident is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Action {action_id} does not belong to any current incident",
+        )
+
+    anchor = owning_incident.get("anchor")
+
+    # Write to DB with anchor
     db.upsert_approval(
         action_id=action_id,
         decision=body.decision,
         analyst=body.analyst,
         comment=body.comment,
         evidence_ids=None,
+        incident_anchor=anchor,
     )
 
     # Append to audit log
@@ -255,7 +490,7 @@ def post_decision(action_id: str, body: DecisionRequest) -> dict:
         analyst=body.analyst,
         event=f"DECISION_{body.decision.upper()}",
         action_id=action_id,
-        details={"comment": body.comment, "decision": body.decision},
+        details={"comment": body.comment, "decision": body.decision, "anchor": anchor},
     )
 
     return {
@@ -274,19 +509,46 @@ def post_decision(action_id: str, body: DecisionRequest) -> dict:
 def execute_action(action_id: str, analyst: str = "unknown") -> dict:
     """
     Execute is simulated only.
-    Backend enforces: approved record must exist, or HTTP 403 is returned.
+    Backend enforces: approved record with matching anchor must exist, or HTTP 403.
     Label: "Simulated: no real system changed"
     """
-    is_approved, approval_row = db.require_approved(action_id)
+    # Find current incident anchor for this action
+    result = _get_pipeline()
+    current_anchor = None
+    action_found = False
+    for inc in result["incidents"]:
+        inc_id = inc["id"]
+        playbook_name = actions_module.pick_playbook(inc)
+        if playbook_name:
+            playbooks = result["playbooks"]
+            playbook = playbooks.get(playbook_name)
+            if playbook:
+                for step in playbook.get("steps", []):
+                    if f"{inc_id}-{step['id']}" == action_id:
+                        current_anchor = inc.get("anchor")
+                        action_found = True
+                        break
+        if action_found:
+            break
+
+    if not action_found:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Action {action_id} does not belong to any current incident",
+        )
+
+    is_approved, approval_row, reason = db.require_approved_with_anchor(
+        action_id, current_anchor
+    )
 
     if not is_approved:
-        # Log blocked attempt
+        block_detail = reason if reason else "No approved record found"
         db.append_audit(
             analyst=analyst,
             event="EXECUTION_BLOCKED",
             action_id=action_id,
             details={
-                "reason": "No approved record found",
+                "reason": block_detail,
                 "decision_on_record": (approval_row or {}).get("decision"),
                 "label": "Simulated: no real system changed",
             },
@@ -294,13 +556,12 @@ def execute_action(action_id: str, analyst: str = "unknown") -> dict:
         raise HTTPException(
             status_code=403,
             detail={
-                "error": "Execution blocked: action has not been approved.",
+                "error": f"Execution blocked: {block_detail}",
                 "action_id": action_id,
                 "label": "Simulated: no real system changed",
             },
         )
 
-    # Log simulated execution
     db.append_audit(
         analyst=analyst,
         event="EXECUTED_SIMULATED",
@@ -330,19 +591,148 @@ def get_audit(limit: int = 200) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# POST /incidents/{inc_id}/summary  (trigger LLM call)
+# POST /alerts  — add a manual alert
 # ---------------------------------------------------------------------------
 
-@app.post("/incidents/{inc_id}/summary")
-def trigger_summary(inc_id: str) -> dict:
+@app.post("/alerts")
+def add_alert(body: AlertRequest) -> dict:
     """
-    Trigger an LLM summary generation for an incident.
-    This may block briefly. Cache is populated on completion.
+    Add a new manual alert.
+    Server assigns the ID (next free A-NNN across seeded + manual).
+    Invalidates the pipeline cache and returns the freshly rebuilt incident list + stats.
     """
-    inc = _get_incident_by_id(inc_id)
-    if not inc:
-        raise HTTPException(status_code=404, detail=f"Incident {inc_id} not found")
+    # Gather seeded IDs for next_id computation
+    seeded = pipeline_module.load_json("alerts.json")["alerts"]
+    seeded_ids = [a["id"] for a in seeded]
+    alert_id = db.next_alert_id(seeded_ids)
 
-    playbook_name = actions_module.pick_playbook(inc)
-    summary = llm_module.get_summary(inc, rule_based_playbook=playbook_name)
-    return {"inc_id": inc_id, "summary": summary}
+    # Use real UTC now when timestamp omitted
+    ts = body.timestamp
+    if ts is None:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    alert_payload = {
+        "id": alert_id,
+        "timestamp": ts,
+        "source": body.source,
+        "severity": body.severity,
+        "title": body.title,
+        "description": body.description,
+        "raw": body.raw,
+        "user": body.user,
+        "host": body.host,
+        "ip": body.ip,
+        "resource": body.resource,
+        "origin": "manual",
+    }
+
+    db.insert_manual_alert(alert_id, alert_payload, body.analyst)
+
+    db.append_audit(
+        analyst=body.analyst,
+        event="ALERT_ADDED",
+        action_id=None,
+        details={"alert_id": alert_id, "analyst": body.analyst},
+    )
+
+    # Invalidate and rebuild
+    _invalidate_pipeline()
+    result = _get_pipeline()
+
+    return {
+        "alert": alert_payload,
+        **_incident_list_payload(result),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /alerts
+# ---------------------------------------------------------------------------
+
+@app.get("/alerts")
+def list_alerts(origin: Optional[str] = Query(default=None)) -> dict:
+    """
+    Return all alerts (seeded + manual) with origin field, newest first.
+    Optional ?origin=manual or ?origin=seeded filter.
+    """
+    result = _get_pipeline()
+    # Collect alerts from all incidents + unlinked
+    all_alerts: list[dict] = []
+    seen: set[str] = set()
+    for inc in result["incidents"]:
+        for a in inc["alerts"]:
+            if a["id"] not in seen:
+                all_alerts.append(a)
+                seen.add(a["id"])
+    for a in result.get("unlinked", []):
+        if a["id"] not in seen:
+            all_alerts.append(a)
+            seen.add(a["id"])
+
+    # Sort newest first by timestamp
+    all_alerts.sort(key=lambda a: a.get("timestamp", ""), reverse=True)
+
+    # Filter by origin if requested
+    if origin in ("manual", "seeded"):
+        all_alerts = [a for a in all_alerts if a.get("origin") == origin]
+
+    return {
+        "alerts": [
+            {
+                "id": a["id"],
+                "timestamp": a["timestamp"],
+                "source": a["source"],
+                "severity": a["severity"],
+                "title": a["title"],
+                "description": a.get("description"),
+                "user": a.get("user"),
+                "host": a.get("host"),
+                "ip": a.get("ip"),
+                "resource": a.get("resource"),
+                "origin": a.get("origin", "seeded"),
+            }
+            for a in all_alerts
+        ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# DELETE /alerts/{alert_id}
+# ---------------------------------------------------------------------------
+
+@app.delete("/alerts/{alert_id}")
+def delete_alert(alert_id: str, analyst: str = Query(...)) -> dict:
+    """
+    Remove a manual alert.
+    403 if the alert is seeded. 404 if not found at all.
+    """
+    if not analyst or not analyst.strip():
+        raise HTTPException(status_code=422, detail="analyst query param is required")
+
+    # Check if it exists among seeded alerts
+    seeded = pipeline_module.load_json("alerts.json")["alerts"]
+    seeded_ids = {a["id"] for a in seeded}
+    if alert_id in seeded_ids:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Alert {alert_id} is seeded (synthetic) and cannot be removed",
+        )
+
+    deleted = db.delete_manual_alert(alert_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+
+    db.append_audit(
+        analyst=analyst.strip(),
+        event="ALERT_REMOVED",
+        action_id=None,
+        details={"alert_id": alert_id, "analyst": analyst.strip()},
+    )
+
+    _invalidate_pipeline()
+    result = _get_pipeline()
+
+    return {
+        "deleted": alert_id,
+        **_incident_list_payload(result),
+    }

@@ -4,6 +4,7 @@ import Footer from './components/Footer.jsx';
 import IncidentQueue from './pages/IncidentQueue.jsx';
 import IncidentDetail from './pages/IncidentDetail.jsx';
 import AuditLog from './pages/AuditLog.jsx';
+import Alerts from './pages/Alerts.jsx';
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<IncidentQueue />} />
               <Route path="/incidents/:id" element={<IncidentDetail />} />
+              <Route path="/alerts" element={<Alerts />} />
               <Route path="/audit" element={<AuditLog />} />
             </Routes>
           </div>

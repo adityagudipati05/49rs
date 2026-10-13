@@ -71,3 +71,26 @@ export async function fetchAuditLog() {
   if (!res.ok) throw new Error(`GET /audit failed: ${res.status}`);
   return res.json();
 }
+
+// GET /alerts?origin=manual|seeded
+export async function fetchAlerts(origin) {
+  const params = origin ? { origin } : undefined;
+  const res = await request('GET', '/alerts', { params });
+  if (!res.ok) throw new Error(`GET /alerts failed: ${res.status}`);
+  return res.json();
+}
+
+// POST /alerts
+export async function addAlert(body) {
+  const res = await request('POST', '/alerts', { body });
+  return res; // caller checks status
+}
+
+// DELETE /alerts/{id}?analyst=<name>
+export async function deleteAlert(alertId, analyst) {
+  const res = await request('DELETE', `/alerts/${encodeURIComponent(alertId)}`, {
+    params: { analyst },
+  });
+  return res;
+}
+

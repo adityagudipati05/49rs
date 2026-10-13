@@ -48,6 +48,17 @@ function ZapIcon() {
   );
 }
 
+// Warn icon
+function WarnIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
 export default function IncidentDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -128,17 +139,28 @@ export default function IncidentDetail() {
   }
 
   if (error) {
+    const is404 = error.includes('404');
     return (
       <div>
-        <div className="error-banner" role="alert">
-          <span className="error-banner-text">
-            Cannot reach API at {API_BASE}. Is <code>uvicorn api:app</code> running?
-            <br />
-            <span style={{ fontSize: 12, opacity: 0.8 }}>{error}</span>
-          </span>
-          <button type="button" className="btn btn-secondary" onClick={load} id="retry-detail">
-            Retry
-          </button>
+        <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+          <div style={{ marginBottom: 12, fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>
+            Incident {id} Not Found
+          </div>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 20, maxWidth: 500, margin: '0 auto 20px' }}>
+            {is404
+              ? 'This incident no longer exists or was renumbered/merged after alerts were modified.'
+              : `Cannot reach API at ${API_BASE}: ${error}`}
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+            <Link to="/" className="btn btn-primary" id="return-to-queue">
+              <ArrowLeftIcon /> Return to Incident Queue
+            </Link>
+            {!is404 && (
+              <button type="button" className="btn btn-secondary" onClick={load} id="retry-detail">
+                Retry
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -148,6 +170,7 @@ export default function IncidentDetail() {
 
   const summary = data.summary;
   const summaryAvailable = summary && summary.status !== 'unavailable';
+  const isSummaryStale = summary && summary.summary_stale === true;
   const alerts = data.alerts || [];
   const alertsLookup = Object.fromEntries(alerts.map(a => [a.id, a]));
   const playbook = data.playbook;
@@ -202,7 +225,7 @@ export default function IncidentDetail() {
               <h2 className="section-heading">AI Summary</h2>
               <button
                 type="button"
-                className="btn btn-primary"
+                className={`btn ${isSummaryStale ? 'btn-primary btn-highlight' : 'btn-primary'}`}
                 onClick={handleGenerateSummary}
                 disabled={summaryLoading}
                 id="generate-summary"
@@ -212,6 +235,21 @@ export default function IncidentDetail() {
                 {summaryLoading ? 'Generating...' : 'Generate / Refresh AI Summary'}
               </button>
             </div>
+
+            {/* Stale summary banner */}
+            {isSummaryStale && (
+              <div
+                className="warning-banner"
+                role="alert"
+                style={{ marginBottom: 12 }}
+                id="stale-summary-banner"
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <WarnIcon />
+                  <strong>Summary is out of date, regenerate</strong>
+                </span>
+              </div>
+            )}
 
             {summaryError && (
               <div className="result-banner error" role="alert" style={{ marginBottom: 12 }}>
@@ -282,7 +320,7 @@ export default function IncidentDetail() {
           </div>
 
           {/* Raw Alerts */}
-          <RawAlerts ref={rawAlertsRef} alerts={alerts} />
+          <RawAlerts ref={rawAlertsRef} alerts={alerts} analyst={analyst} onAlertRemoved={load} />
         </div>
 
         {/* RIGHT: Risk score, Why this score, Context, Playbook, Action cards */}

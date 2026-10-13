@@ -76,7 +76,10 @@ export default function ActionCard({ card, analyst, onRefetch }) {
         setResult({ type: 'success', text: `${data.status} — ${data.label || ''}` });
         await onRefetch();
       } else if (res.status === 403) {
-        setResult({ type: 'error', text: 'Blocked by backend: action not approved.' });
+        const errJson = await res.json().catch(() => null);
+        const errMsg = errJson?.detail?.error || errJson?.detail || 'Blocked by backend: action not approved.';
+        setResult({ type: 'error', text: typeof errMsg === 'object' ? JSON.stringify(errMsg) : String(errMsg) });
+        await onRefetch();
       } else {
         const text = await res.text();
         setResult({ type: 'error', text: `Error ${res.status}: ${text}` });
@@ -114,6 +117,14 @@ export default function ActionCard({ card, analyst, onRefetch }) {
         <span className="action-meta-key">Risk</span>
         <span className="action-meta-val">{card.risk || 'unknown'}</span>
       </div>
+
+      {/* Invalidation notice */}
+      {card.approval_invalidated_reason && (
+        <div className="warning-callout" id={`invalidation-${card.action_id}`}>
+          <span className="warning-callout-icon"><WarnIcon /></span>
+          <span><strong>Approval invalidated:</strong> {card.approval_invalidated_reason}</span>
+        </div>
+      )}
 
       {/* Warnings */}
       {card.warnings && card.warnings.length > 0 && (

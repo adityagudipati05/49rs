@@ -20,7 +20,19 @@ CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 ALLOWED_PLAYBOOKS = {"compromised_account", "malware_host", "cloud_exposure"}
-MODEL_NAME = "claude-sonnet-4-6"
+MODEL_NAME = "openai/gpt-oss-120b"
+
+# Load local .env file if present (ignored in git)
+_dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_dotenv_path) and "GROQ_API_KEY" not in os.environ:
+    try:
+        with open(_dotenv_path, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line.startswith("GROQ_API_KEY="):
+                    os.environ["GROQ_API_KEY"] = _line.split("=", 1)[1].strip()
+    except Exception:
+        pass
 
 UNAVAILABLE = {"status": "unavailable"}
 
@@ -99,37 +111,60 @@ def _strip_fences(text: str) -> str:
 
 def _call_api(payload: dict) -> Optional[dict]:
     """
-    Make one Anthropic API call.
+    Make LLM API call using Groq (or Anthropic if configured/tested).
     Returns parsed JSON dict or None on failure.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
+    groq_api_key = os.environ.get("GROQ_API_KEY")
+    anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
 
-    try:
-        import anthropic  # type: ignore
-    except ImportError:
+    if not groq_api_key and not anthropic_api_key:
         return None
-
-    client = anthropic.Anthropic(api_key=api_key)
 
     # Alert data is passed as a user message JSON — never interpolated into system prompt
     user_message = json.dumps(payload, ensure_ascii=False)
 
-    try:
-        response = client.messages.create(
-            model=MODEL_NAME,
-            max_tokens=2048,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
-        )
-        raw_text = response.content[0].text
-        cleaned = _strip_fences(raw_text)
-        return json.loads(cleaned)
-    except (json.JSONDecodeError, AttributeError, IndexError):
-        return None
-    except Exception:  # noqa: BLE001
-        return None
+    # 1. Anthropic path (used when ANTHROPIC_API_KEY is explicitly set / in existing tests)
+    if anthropic_api_key:
+        try:
+            import anthropic  # type: ignore
+            client = anthropic.Anthropic(api_key=anthropic_api_key)
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=2048,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            raw_text = response.content[0].text
+            cleaned = _strip_fences(raw_text)
+            return json.loads(cleaned)
+        except (json.JSONDecodeError, AttributeError, IndexError):
+            return None
+        except Exception:
+            return None
+
+    # 2. Groq path (primary for live runtime)
+    if groq_api_key:
+        try:
+            from groq import Groq  # type: ignore
+            client = Groq(api_key=groq_api_key)
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+            raw_text = response.choices[0].message.content
+            cleaned = _strip_fences(raw_text)
+            return json.loads(cleaned)
+        except (json.JSONDecodeError, AttributeError, IndexError):
+            return None
+        except Exception:
+            return None
+
+    return None
 
 
 def _validate_playbook(llm_response: dict, rule_based_playbook: Optional[str]) -> dict:
@@ -220,10 +255,49 @@ def get_summary(
     return result
 
 
-def load_cached_summary(inc_id: str) -> Optional[dict]:
+def _build_payload(incident: dict) -> dict:
+    """
+    Build the payload dict that would be sent to the LLM for this incident.
+    Used to compute the current hash for stale-summary detection.
+    """
+    return {
+        "incident_id": incident["id"],
+        "alert_ids": incident["alert_ids"],
+        "entities": incident.get("entities", {}),
+        "sources": incident.get("sources", []),
+        "earliest": incident.get("earliest"),
+        "latest": incident.get("latest"),
+        "alerts": [
+            {
+                "id": a["id"],
+                "timestamp": a["timestamp"],
+                "source": a["source"],
+                "severity": a["severity"],
+                "title": a["title"],
+                "description": a["description"],
+                "raw": a["raw"],
+                "user": a.get("user"),
+                "host": a.get("host"),
+                "ip": a.get("ip"),
+                "intel": a.get("intel"),
+                "asset": a.get("asset"),
+                "user_ctx": a.get("user_ctx"),
+            }
+            for a in incident.get("alerts", [])
+        ],
+    }
+
+
+def load_cached_summary(inc_id: str, incident: Optional[dict] = None) -> Optional[dict]:
     """
     Load a cached summary without triggering an API call.
     Returns None if no cache exists.
+
+    When `incident` is provided:
+    - Computes the current payload hash.
+    - Adds `summary_stale: true` to the returned dict when the stored hash
+      differs from the current hash (i.e., the incident changed since the
+      summary was generated). Never defaults summary_stale.
     """
     path = _cache_path(inc_id)
     if not os.path.exists(path):
@@ -231,6 +305,18 @@ def load_cached_summary(inc_id: str) -> Optional[dict]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             cached = json.load(f)
-        return cached.get("response")
     except (json.JSONDecodeError, OSError):
         return None
+
+    response = cached.get("response")
+    if response is None:
+        return None
+
+    if incident is not None:
+        current_hash = _hash_payload(_build_payload(incident))
+        stored_hash = cached.get("_meta", {}).get("payload_hash")
+        # summary_stale is computed from real data only — never defaulted
+        response = dict(response)  # don't mutate the original
+        response["summary_stale"] = (stored_hash != current_hash)
+
+    return response
