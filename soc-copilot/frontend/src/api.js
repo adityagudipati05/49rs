@@ -1,0 +1,73 @@
+/**
+ * api.js — all fetch wrappers for the SOC Copilot FastAPI backend.
+ * API base URL from VITE_API_BASE env var, defaulting to localhost:8000.
+ */
+
+export const API_BASE =
+  typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE
+    ? import.meta.env.VITE_API_BASE
+    : 'http://localhost:8000';
+
+async function request(method, path, { body, params } = {}) {
+  let url = `${API_BASE}${path}`;
+  if (params) {
+    const qs = new URLSearchParams(params).toString();
+    url = `${url}?${qs}`;
+  }
+
+  const options = {
+    method,
+    headers: {},
+  };
+
+  if (body !== undefined) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(url, options);
+  return response; // caller handles status checking
+}
+
+// GET /incidents
+export async function fetchIncidents() {
+  const res = await request('GET', '/incidents');
+  if (!res.ok) throw new Error(`GET /incidents failed: ${res.status}`);
+  return res.json();
+}
+
+// GET /incidents/{id}
+export async function fetchIncident(id) {
+  const res = await request('GET', `/incidents/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`GET /incidents/${id} failed: ${res.status}`);
+  return res.json();
+}
+
+// POST /incidents/{id}/summary
+export async function triggerSummary(id) {
+  const res = await request('POST', `/incidents/${encodeURIComponent(id)}/summary`);
+  return res; // return raw response so caller can check status
+}
+
+// POST /actions/{action_id}/decision
+export async function postDecision(actionId, decision, analyst, comment) {
+  const res = await request('POST', `/actions/${encodeURIComponent(actionId)}/decision`, {
+    body: { decision, analyst, comment: comment || null },
+  });
+  return res;
+}
+
+// POST /actions/{action_id}/execute?analyst=<name>
+export async function executeAction(actionId, analyst) {
+  const res = await request('POST', `/actions/${encodeURIComponent(actionId)}/execute`, {
+    params: { analyst },
+  });
+  return res;
+}
+
+// GET /audit
+export async function fetchAuditLog() {
+  const res = await request('GET', '/audit');
+  if (!res.ok) throw new Error(`GET /audit failed: ${res.status}`);
+  return res.json();
+}
