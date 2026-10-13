@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchAlerts, fetchIncidents, addAlert, deleteAlert, API_BASE } from '../api.js';
 
 function sevLabel(sev) {
@@ -237,9 +238,13 @@ export default function Alerts() {
     }
   }
 
+  const linkedAlertIds = new Set(incidents.flatMap(inc => inc.alert_ids || []));
+
   const filteredAlerts = alerts.filter(a => {
     if (originFilter === 'manual') return a.origin === 'manual';
     if (originFilter === 'seeded') return a.origin !== 'manual';
+    if (originFilter === 'unlinked') return !linkedAlertIds.has(a.id);
+    if (originFilter === 'grouped') return linkedAlertIds.has(a.id);
     return true;
   });
 
@@ -311,8 +316,8 @@ export default function Alerts() {
         </div>
       )}
 
-      {/* Origin filter tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      {/* Filter tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
         <button
           type="button"
           className={`btn ${originFilter === 'all' ? 'btn-secondary' : 'btn-ghost'}`}
@@ -324,6 +329,30 @@ export default function Alerts() {
           id="filter-all"
         >
           All ({alerts.length})
+        </button>
+        <button
+          type="button"
+          className={`btn ${originFilter === 'unlinked' ? 'btn-secondary' : 'btn-ghost'}`}
+          onClick={() => setOriginFilter('unlinked')}
+          style={{
+            borderColor: originFilter === 'unlinked' ? 'var(--accent)' : 'var(--border)',
+            color: originFilter === 'unlinked' ? 'var(--accent)' : 'var(--text-muted)',
+          }}
+          id="filter-unlinked"
+        >
+          Ungrouped ({alerts.filter(a => !linkedAlertIds.has(a.id)).length})
+        </button>
+        <button
+          type="button"
+          className={`btn ${originFilter === 'grouped' ? 'btn-secondary' : 'btn-ghost'}`}
+          onClick={() => setOriginFilter('grouped')}
+          style={{
+            borderColor: originFilter === 'grouped' ? 'var(--accent)' : 'var(--border)',
+            color: originFilter === 'grouped' ? 'var(--accent)' : 'var(--text-muted)',
+          }}
+          id="filter-grouped"
+        >
+          In Incident ({alerts.filter(a => linkedAlertIds.has(a.id)).length})
         </button>
         <button
           type="button"
@@ -357,7 +386,7 @@ export default function Alerts() {
           <table className="data-table">
             <thead>
               <tr>
-                {['ID', 'Time', 'Source', 'Severity', 'Entities', 'Title', 'Origin', 'Actions'].map(h => (
+                {['ID', 'Time', 'Source', 'Severity', 'Entities', 'Title', 'Incident', 'Origin', 'Actions'].map(h => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -365,7 +394,7 @@ export default function Alerts() {
             <tbody>
               {[...Array(6)].map((_, i) => (
                 <tr key={i}>
-                  {[...Array(8)].map((__, j) => (
+                  {[...Array(9)].map((__, j) => (
                     <td key={j}>
                       <div className="skeleton skeleton-line" style={{ width: '70%' }} />
                     </td>
@@ -390,6 +419,7 @@ export default function Alerts() {
                 <th>Severity</th>
                 <th>Entities</th>
                 <th>Title</th>
+                <th>Incident</th>
                 <th>Origin</th>
                 <th>Actions</th>
               </tr>
@@ -397,6 +427,7 @@ export default function Alerts() {
             <tbody>
               {filteredAlerts.map(alert => {
                 const isManual = alert.origin === 'manual';
+                const incidentForAlert = incidents.find(inc => inc.alert_ids && inc.alert_ids.includes(alert.id));
                 const entitiesList = [];
                 if (alert.user) entitiesList.push(`user: ${alert.user}`);
                 if (alert.host) entitiesList.push(`host: ${alert.host}`);
@@ -438,6 +469,45 @@ export default function Alerts() {
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                           {alert.description}
                         </div>
+                      )}
+                    </td>
+                    <td>
+                      {incidentForAlert ? (
+                        <Link
+                          to={`/incidents/${incidentForAlert.id}`}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            background: 'rgba(56, 139, 253, 0.15)',
+                            color: '#58a6ff',
+                            border: '1px solid rgba(56, 139, 253, 0.3)',
+                            textDecoration: 'none',
+                          }}
+                          title={`Part of ${incidentForAlert.id}`}
+                        >
+                          {incidentForAlert.id}
+                        </Link>
+                      ) : (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            fontSize: '11px',
+                            fontWeight: 500,
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            color: 'var(--text-muted)',
+                            border: '1px solid var(--border)',
+                          }}
+                          title="Ungrouped noise / isolated alert"
+                        >
+                          Ungrouped
+                        </span>
                       )}
                     </td>
                     <td>
