@@ -188,3 +188,124 @@ class TestInjectionProtection:
         }
         result = llm._validate_playbook(good_response, "malware_host")
         assert result["recommended_playbook"] == "malware_host"
+
+
+# ---------------------------------------------------------------------------
+# Demo cache fallback (Task 6)
+# ---------------------------------------------------------------------------
+
+class TestDemoCacheFallback:
+    def test_demo_cache_fallback_when_cache_empty(self, tmp_path):
+        """When cache/ has no entry for an incident, falls back to demo_cache/."""
+        demo_dir = tmp_path / "demo_cache"
+        demo_dir.mkdir()
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        inc = {
+            "id": "INC-DEMO",
+            "alert_ids": ["A-001"],
+            "entities": {"users": ["test.user"], "hosts": [], "ips": [], "resources": []},
+            "sources": ["identity"],
+            "earliest": "2024-01-01T00:00:00Z",
+            "latest": "2024-01-01T00:00:00Z",
+            "alerts": [
+                {
+                    "id": "A-001",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "source": "identity",
+                    "severity": 2,
+                    "title": "Login",
+                    "description": "desc",
+                    "raw": "raw",
+                }
+            ],
+        }
+
+        payload = llm._build_payload(inc)
+        payload_hash = llm._hash_payload(payload)
+
+        cached_data = {
+            "_meta": {
+                "incident_id": "INC-DEMO",
+                "cached_at": "2024-01-01T00:00:00Z",
+                "payload_hash": payload_hash,
+            },
+            "response": {
+                "title": "Demo Incident",
+                "summary": "Demo summary [A-001].",
+                "timeline": [],
+                "recommended_playbook": "compromised_account",
+                "playbook_reasoning": "Identity alert",
+                "confidence": "high",
+                "unknowns": [],
+            },
+        }
+
+        with open(demo_dir / "INC-DEMO.json", "w", encoding="utf-8") as f:
+            json.dump(cached_data, f)
+
+        with mock.patch("llm.CACHE_DIR", str(cache_dir)):
+            with mock.patch("llm.DEMO_CACHE_DIR", str(demo_dir)):
+                res = llm.load_cached_summary("INC-DEMO", incident=inc)
+
+        assert res is not None
+        assert res["title"] == "Demo Incident"
+        assert res["demo_source"] is True
+        assert res["summary_stale"] is False
+
+    def test_demo_cache_staleness_on_changed_incident(self, tmp_path):
+        """When incident has changed compared to demo_cache payload_hash, summary_stale is True."""
+        demo_dir = tmp_path / "demo_cache"
+        demo_dir.mkdir()
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+
+        inc = {
+            "id": "INC-DEMO",
+            "alert_ids": ["A-001"],
+            "entities": {"users": ["test.user"], "hosts": [], "ips": [], "resources": []},
+            "sources": ["identity"],
+            "earliest": "2024-01-01T00:00:00Z",
+            "latest": "2024-01-01T00:00:00Z",
+            "alerts": [
+                {
+                    "id": "A-001",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "source": "identity",
+                    "severity": 2,
+                    "title": "Login",
+                    "description": "desc",
+                    "raw": "raw",
+                }
+            ],
+        }
+
+        cached_data = {
+            "_meta": {
+                "incident_id": "INC-DEMO",
+                "cached_at": "2024-01-01T00:00:00Z",
+                "payload_hash": "different_hash_value",
+            },
+            "response": {
+                "title": "Demo Incident",
+                "summary": "Demo summary [A-001].",
+                "timeline": [],
+                "recommended_playbook": "compromised_account",
+                "playbook_reasoning": "Identity alert",
+                "confidence": "high",
+                "unknowns": [],
+            },
+        }
+
+        with open(demo_dir / "INC-DEMO.json", "w", encoding="utf-8") as f:
+            json.dump(cached_data, f)
+
+        with mock.patch("llm.CACHE_DIR", str(cache_dir)):
+            with mock.patch("llm.DEMO_CACHE_DIR", str(demo_dir)):
+                res = llm.load_cached_summary("INC-DEMO", incident=inc)
+
+        assert res is not None
+        assert res["demo_source"] is True
+        assert res["summary_stale"] is True
+

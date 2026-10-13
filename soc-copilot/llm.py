@@ -19,6 +19,9 @@ from typing import Optional
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+# Demo cache: shipped in git so fresh clones work offline
+DEMO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "data", "demo_cache")
+
 ALLOWED_PLAYBOOKS = {"compromised_account", "malware_host", "cloud_exposure"}
 MODEL_NAME = "openai/gpt-oss-120b"
 
@@ -291,17 +294,28 @@ def _build_payload(incident: dict) -> dict:
 def load_cached_summary(inc_id: str, incident: Optional[dict] = None) -> Optional[dict]:
     """
     Load a cached summary without triggering an API call.
-    Returns None if no cache exists.
+    Falls back to data/demo_cache/ when cache/ has no entry.
+    Returns None if no cache exists in either location.
 
     When `incident` is provided:
     - Computes the current payload hash.
     - Adds `summary_stale: true` to the returned dict when the stored hash
       differs from the current hash (i.e., the incident changed since the
       summary was generated). Never defaults summary_stale.
+    - Adds `demo_source: true` when the response comes from demo_cache.
     """
+    # Try live cache first
     path = _cache_path(inc_id)
+    demo_source = False
     if not os.path.exists(path):
-        return None
+        # Fall back to demo_cache
+        demo_path = os.path.join(DEMO_CACHE_DIR, f"{inc_id}.json")
+        if os.path.exists(demo_path):
+            path = demo_path
+            demo_source = True
+        else:
+            return None
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             cached = json.load(f)
@@ -312,11 +326,16 @@ def load_cached_summary(inc_id: str, incident: Optional[dict] = None) -> Optiona
     if response is None:
         return None
 
+    response = dict(response)  # don't mutate the original
+
     if incident is not None:
         current_hash = _hash_payload(_build_payload(incident))
         stored_hash = cached.get("_meta", {}).get("payload_hash")
         # summary_stale is computed from real data only — never defaulted
-        response = dict(response)  # don't mutate the original
         response["summary_stale"] = (stored_hash != current_hash)
+
+    # Tag demo cache so UI can show the appropriate label
+    if demo_source:
+        response["demo_source"] = True
 
     return response

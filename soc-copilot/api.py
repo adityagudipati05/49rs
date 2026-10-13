@@ -291,6 +291,29 @@ def get_incident(inc_id: str) -> dict:
     # Context cards
     context = _build_context(inc)
 
+    # Deterministic injection detection — never alters score, never passed to LLM
+    injection_findings = injection_module.detect_injection(inc.get("alerts", []))
+
+    # Basic timeline from alert timestamps — available even without LLM
+    timeline_basic = _build_timeline_basic(inc)
+
+    serialized_alerts = [
+        {
+            "id": a["id"],
+            "timestamp": a["timestamp"],
+            "source": a["source"],
+            "severity": a["severity"],
+            "title": a["title"],
+            "description": a["description"],
+            "raw": a.get("raw"),
+            "user": a.get("user"),
+            "host": a.get("host"),
+            "ip": a.get("ip"),
+            "origin": a.get("origin", "seeded"),
+        }
+        for a in inc["alerts"]
+    ]
+
     return {
         "id": inc["id"],
         "score": inc["score"],
@@ -302,27 +325,14 @@ def get_incident(inc_id: str) -> dict:
         "earliest": inc["earliest"],
         "latest": inc["latest"],
         "anchor": inc.get("anchor"),
-        "alerts": [
-            {
-                "id": a["id"],
-                "timestamp": a["timestamp"],
-                "source": a["source"],
-                "severity": a["severity"],
-                "title": a["title"],
-                "description": a["description"],
-                "raw": a.get("raw"),
-                "user": a.get("user"),
-                "host": a.get("host"),
-                "ip": a.get("ip"),
-                "origin": a.get("origin", "seeded"),
-            }
-            for a in inc["alerts"]
-        ],
+        "alerts": serialized_alerts,
         "summary": summary,
         "validation": validation,
         "context": context,
         "playbook": playbook_name,
         "action_cards": action_cards,
+        "injection_findings": injection_findings,
+        "timeline_basic": timeline_basic,
     }
 
 
@@ -387,6 +397,27 @@ def _build_action_cards_with_anchor(
     return cards
 
 
+def _build_timeline_basic(inc: dict) -> list[dict]:
+    """
+    Build a deterministic timeline from alert timestamps.
+    Sorted ascending. attack_stage is always null — never invented.
+    """
+    alerts = sorted(
+        inc.get("alerts", []),
+        key=lambda a: a.get("timestamp") or "",
+    )
+    return [
+        {
+            "time": a.get("timestamp"),
+            "event": a.get("title"),
+            "source_id": a.get("id"),
+            "source": a.get("source"),
+            "attack_stage": None,
+        }
+        for a in alerts
+    ]
+
+
 def _build_context(inc: dict) -> dict:
     """
     Build context cards from enriched incident data.
@@ -434,11 +465,172 @@ def trigger_summary(inc_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"Incident {inc_id} not found")
 
     playbook_name = actions_module.pick_playbook(inc)
-    summary = llm_module.get_summary(inc, rule_based_playbook=playbook_name)
+    summary = llm_module.get_summary(inc, rule_based_playbook=playbook_name, force_refresh=True)
     # After regeneration, summary is fresh — not stale
     summary = dict(summary)
     summary["summary_stale"] = False
     return {"inc_id": inc_id, "summary": summary}
+
+
+# ---------------------------------------------------------------------------
+# GET /incidents/{inc_id}/case-note
+# ---------------------------------------------------------------------------
+
+@app.get("/incidents/{inc_id}/case-note")
+def get_case_note(inc_id: str) -> dict:
+    """
+    Generate a structured markdown case note for the incident.
+    Headings always appear in the same fixed order.
+    Never invents text for missing sections.
+    """
+    inc = _get_incident_by_id(inc_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail=f"Incident {inc_id} not found")
+
+    summary = llm_module.load_cached_summary(inc_id, incident=inc)
+    summary_available = summary and summary.get("status") != "unavailable"
+
+    playbook_name = actions_module.pick_playbook(inc)
+    playbooks = _get_pipeline()["playbooks"]
+    assets = _get_assets()
+    action_cards = _build_action_cards_with_anchor(inc, playbook_name, playbooks, assets)
+    context = _build_context(inc)
+    timeline_basic = _build_timeline_basic(inc)
+    injection_findings = injection_module.detect_injection(inc.get("alerts", []))
+
+    validation = None
+    if summary_available:
+        validation = validator_module.validate(
+            summary.get("summary", ""),
+            inc["alert_ids"],
+            summary.get("timeline", []),
+        )
+
+    lines: list[str] = []
+
+    # # Title
+    title = (summary.get("title") if summary_available else None) or inc_id
+    lines.append(f"# {title}\n")
+
+    # ## Risk
+    lines.append("## Risk\n")
+    lines.append(f"**Score:** {inc['score']}  **Label:** {inc['label']}\n")
+    if inc.get("reasons"):
+        lines.append("**Scoring factors:**")
+        for r in inc["reasons"]:
+            lines.append(f"- {r}")
+    lines.append("")
+
+    # ## Summary
+    lines.append("## Summary\n")
+    if summary_available and summary.get("summary"):
+        lines.append(summary["summary"])
+    else:
+        lines.append("AI summary unavailable.")
+    lines.append("")
+
+    # ## Timeline
+    lines.append("## Timeline\n")
+    if summary_available and summary.get("timeline"):
+        timeline = summary["timeline"]
+        lines.append("| Time | Event | Source | Stage |")
+        lines.append("|------|-------|--------|-------|")
+        for e in timeline:
+            t = e.get("time") or "—"
+            ev = e.get("event") or "—"
+            src = e.get("source_id") or "—"
+            stg = e.get("attack_stage") or "—"
+            lines.append(f"| {t} | {ev} | {src} | {stg} |")
+    else:
+        lines.append("*Built from alert timestamps (not AI)*\n")
+        lines.append("| Time | Event | Source |")
+        lines.append("|------|-------|--------|")
+        for e in timeline_basic:
+            t = e.get("time") or "—"
+            ev = e.get("event") or "—"
+            src = e.get("source_id") or "—"
+            lines.append(f"| {t} | {ev} | {src} |")
+    lines.append("")
+
+    # ## Context
+    lines.append("## Context\n")
+    entities = inc.get("entities", {})
+    if entities.get("users"):
+        lines.append(f"**Users:** {', '.join(entities['users'])}")
+    if entities.get("hosts"):
+        lines.append(f"**Hosts:** {', '.join(entities['hosts'])}")
+    if entities.get("ips"):
+        lines.append(f"**IPs:** {', '.join(entities['ips'])}")
+    if context.get("threat_intel"):
+        ti = context["threat_intel"]
+        lines.append(f"**Threat intel ({ti.get('ip')}):** verdict={ti.get('verdict')}, confidence={ti.get('confidence')}")
+    lines.append("")
+
+    # ## Recommended playbook
+    lines.append("## Recommended playbook\n")
+    if playbook_name:
+        lines.append(f"**{playbook_name.replace('_', ' ').title()}**")
+        if summary_available and summary.get("playbook_reasoning"):
+            lines.append(f"AI reasoning: {summary['playbook_reasoning']}")
+    else:
+        lines.append("No playbook matched.")
+    lines.append("")
+
+    # ## Actions and decisions
+    lines.append("## Actions and decisions\n")
+    if action_cards:
+        for card in action_cards:
+            lines.append(f"**{card['action_id']}** — {card.get('action', '').replace('_', ' ').title()}")
+            lines.append(f"- Target: {card.get('target') or 'unknown'}")
+            lines.append(f"- Status: {card.get('status', 'pending')}")
+            row = db.get_approval(card["action_id"])
+            if row and row.get("decision"):
+                lines.append(f"- Analyst: {row.get('analyst')}")
+                if row.get("comment"):
+                    lines.append(f"- Comment: {row['comment']}")
+            lines.append("")
+    else:
+        lines.append("No action cards generated.")
+    lines.append("")
+
+    # ## Unknowns and injection findings
+    lines.append("## Unknowns and injection findings\n")
+    unknowns = (summary.get("unknowns") or []) if summary_available else []
+    if unknowns:
+        lines.append("**Unknowns:**")
+        for u in unknowns:
+            lines.append(f"- {u}")
+    if injection_findings:
+        lines.append("**Injection findings:**")
+        for f in injection_findings:
+            lines.append(f"- Alert {f['alert_id']} ({f['field']}): `{f['matched']}`")
+    if not unknowns and not injection_findings:
+        lines.append("None.")
+    lines.append("")
+
+    # ## Validation
+    lines.append("## Validation\n")
+    if validation:
+        status = "✅ Passed" if validation.get("passed") else "❌ Failed"
+        lines.append(f"**Status:** {status}")
+        if validation.get("invalid_citations"):
+            lines.append(f"- Invalid citations: {', '.join(validation['invalid_citations'])}")
+        if validation.get("uncited_sentences"):
+            lines.append(f"- Uncited sentences: {len(validation['uncited_sentences'])}")
+        if validation.get("timeline_invalid_ids"):
+            lines.append(f"- Timeline invalid IDs: {', '.join(validation['timeline_invalid_ids'])}")
+    else:
+        lines.append("No AI summary to validate.")
+    lines.append("")
+
+    # Footer
+    lines.append("---")
+    lines.append("*Synthetic data. Execution is simulated.*")
+
+    markdown = "\n".join(lines)
+    return {"markdown": markdown}
+
+
 
 
 # ---------------------------------------------------------------------------
