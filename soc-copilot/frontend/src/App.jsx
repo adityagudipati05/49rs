@@ -5,6 +5,7 @@ import IncidentQueue from './pages/IncidentQueue.jsx';
 import IncidentDetail from './pages/IncidentDetail.jsx';
 import AuditLog from './pages/AuditLog.jsx';
 import Alerts from './pages/Alerts.jsx';
+import ChatPanel from './pages/ChatPanel.jsx';
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
               <Route path="/" element={<IncidentQueue />} />
               <Route path="/incidents/:id" element={<IncidentDetail />} />
               <Route path="/alerts" element={<Alerts />} />
+              <Route path="/diagnose" element={<ChatPanel />} />
               <Route path="/audit" element={<AuditLog />} />
             </Routes>
           </div>

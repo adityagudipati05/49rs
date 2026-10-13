@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchAlerts, fetchIncidents, addAlert, deleteAlert, API_BASE } from '../api.js';
 
 function sevLabel(sev) {
@@ -66,6 +67,7 @@ export default function Alerts() {
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [triageFilter, setTriageFilter] = useState('all');
   const [originFilter, setOriginFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM);
@@ -238,8 +240,9 @@ export default function Alerts() {
   }
 
   const filteredAlerts = alerts.filter(a => {
-    if (originFilter === 'manual') return a.origin === 'manual';
-    if (originFilter === 'seeded') return a.origin !== 'manual';
+    if (triageFilter !== 'all' && a.triage !== triageFilter) return false;
+    if (originFilter === 'manual' && a.origin !== 'manual') return false;
+    if (originFilter === 'seeded' && a.origin === 'manual') return false;
     return true;
   });
 
@@ -311,44 +314,87 @@ export default function Alerts() {
         </div>
       )}
 
-      {/* Origin filter tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <button
-          type="button"
-          className={`btn ${originFilter === 'all' ? 'btn-secondary' : 'btn-ghost'}`}
-          onClick={() => setOriginFilter('all')}
-          style={{
-            borderColor: originFilter === 'all' ? 'var(--accent)' : 'var(--border)',
-            color: originFilter === 'all' ? 'var(--accent)' : 'var(--text-muted)',
-          }}
-          id="filter-all"
-        >
-          All ({alerts.length})
-        </button>
-        <button
-          type="button"
-          className={`btn ${originFilter === 'manual' ? 'btn-secondary' : 'btn-ghost'}`}
-          onClick={() => setOriginFilter('manual')}
-          style={{
-            borderColor: originFilter === 'manual' ? 'var(--accent)' : 'var(--border)',
-            color: originFilter === 'manual' ? 'var(--accent)' : 'var(--text-muted)',
-          }}
-          id="filter-manual"
-        >
-          Manual ({alerts.filter(a => a.origin === 'manual').length})
-        </button>
-        <button
-          type="button"
-          className={`btn ${originFilter === 'seeded' ? 'btn-secondary' : 'btn-ghost'}`}
-          onClick={() => setOriginFilter('seeded')}
-          style={{
-            borderColor: originFilter === 'seeded' ? 'var(--accent)' : 'var(--border)',
-            color: originFilter === 'seeded' ? 'var(--accent)' : 'var(--text-muted)',
-          }}
-          id="filter-seeded"
-        >
-          Seeded ({alerts.filter(a => a.origin !== 'manual').length})
-        </button>
+      {/* Filter tabs: Triage tabs + Origin toggle */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={`btn ${triageFilter === 'all' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setTriageFilter('all')}
+            style={{
+              borderColor: triageFilter === 'all' ? 'var(--accent)' : 'var(--border)',
+              color: triageFilter === 'all' ? 'var(--accent)' : 'var(--text-muted)',
+            }}
+            id="filter-all"
+          >
+            All ({alerts.length})
+          </button>
+          <button
+            type="button"
+            className={`btn ${triageFilter === 'in_incident' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setTriageFilter('in_incident')}
+            style={{
+              borderColor: triageFilter === 'in_incident' ? 'var(--accent)' : 'var(--border)',
+              color: triageFilter === 'in_incident' ? 'var(--accent)' : 'var(--text-muted)',
+            }}
+            id="filter-in-incident"
+          >
+            In incident ({alerts.filter(a => a.triage === 'in_incident').length})
+          </button>
+          <button
+            type="button"
+            className={`btn ${triageFilter === 'needs_review' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setTriageFilter('needs_review')}
+            style={{
+              borderColor: triageFilter === 'needs_review' ? 'var(--accent)' : 'var(--border)',
+              color: triageFilter === 'needs_review' ? 'var(--accent)' : 'var(--text-muted)',
+            }}
+            id="filter-needs-review"
+          >
+            Needs review ({alerts.filter(a => a.triage === 'needs_review').length})
+          </button>
+          <button
+            type="button"
+            className={`btn ${triageFilter === 'low_priority' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setTriageFilter('low_priority')}
+            style={{
+              borderColor: triageFilter === 'low_priority' ? 'var(--accent)' : 'var(--border)',
+              color: triageFilter === 'low_priority' ? 'var(--accent)' : 'var(--text-muted)',
+            }}
+            id="filter-low-priority"
+          >
+            Low priority ({alerts.filter(a => a.triage === 'low_priority').length})
+          </button>
+        </div>
+
+        {/* Origin filter buttons */}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
+          <span>Origin:</span>
+          <button
+            type="button"
+            className={`btn btn-xs ${originFilter === 'all' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setOriginFilter('all')}
+            id="filter-origin-all"
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className={`btn btn-xs ${originFilter === 'manual' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setOriginFilter('manual')}
+            id="filter-manual"
+          >
+            Manual
+          </button>
+          <button
+            type="button"
+            className={`btn btn-xs ${originFilter === 'seeded' ? 'btn-secondary' : 'btn-ghost'}`}
+            onClick={() => setOriginFilter('seeded')}
+            id="filter-seeded"
+          >
+            Seeded
+          </button>
+        </div>
       </div>
 
       {/* Alerts Table */}
@@ -357,7 +403,7 @@ export default function Alerts() {
           <table className="data-table">
             <thead>
               <tr>
-                {['ID', 'Time', 'Source', 'Severity', 'Entities', 'Title', 'Origin', 'Actions'].map(h => (
+                {['ID', 'Time', 'Source', 'Severity', 'Entities', 'Title', 'Triage', 'Origin', 'Actions'].map(h => (
                   <th key={h}>{h}</th>
                 ))}
               </tr>
@@ -365,7 +411,7 @@ export default function Alerts() {
             <tbody>
               {[...Array(6)].map((_, i) => (
                 <tr key={i}>
-                  {[...Array(8)].map((__, j) => (
+                  {[...Array(9)].map((__, j) => (
                     <td key={j}>
                       <div className="skeleton skeleton-line" style={{ width: '70%' }} />
                     </td>
@@ -390,6 +436,7 @@ export default function Alerts() {
                 <th>Severity</th>
                 <th>Entities</th>
                 <th>Title</th>
+                <th>Triage</th>
                 <th>Origin</th>
                 <th>Actions</th>
               </tr>
@@ -438,6 +485,32 @@ export default function Alerts() {
                         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                           {alert.description}
                         </div>
+                      )}
+                    </td>
+                    <td>
+                      {alert.triage === 'in_incident' ? (
+                        alert.incident_id ? (
+                          <Link
+                            to={`/incidents/${encodeURIComponent(alert.incident_id)}`}
+                            className="triage-pill in-incident"
+                            id={`triage-${alert.id}`}
+                            title={`View incident ${alert.incident_id}`}
+                          >
+                            {alert.incident_id}
+                          </Link>
+                        ) : (
+                          <span className="triage-pill in-incident" id={`triage-${alert.id}`}>
+                            In incident
+                          </span>
+                        )
+                      ) : alert.triage === 'needs_review' ? (
+                        <span className="triage-pill needs-review" id={`triage-${alert.id}`}>
+                          Needs review
+                        </span>
+                      ) : (
+                        <span className="triage-pill low-priority" id={`triage-${alert.id}`}>
+                          Low priority
+                        </span>
                       )}
                     </td>
                     <td>

@@ -24,7 +24,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator, model_validator
 
 import actions as actions_module
+import chatbot as chatbot_module
 import db
+import injection as injection_module
 import llm as llm_module
 import pipeline as pipeline_module
 import validator as validator_module
@@ -650,12 +652,22 @@ def add_alert(body: AlertRequest) -> dict:
 # ---------------------------------------------------------------------------
 
 @app.get("/alerts")
-def list_alerts(origin: Optional[str] = Query(default=None)) -> dict:
+def list_alerts(
+    origin: Optional[str] = Query(default=None),
+    triage: Optional[str] = Query(default=None),
+) -> dict:
     """
-    Return all alerts (seeded + manual) with origin field, newest first.
+    Return all alerts (seeded + manual) with origin, incident_id, and triage fields, newest first.
     Optional ?origin=manual or ?origin=seeded filter.
+    Optional ?triage=in_incident|needs_review|low_priority filter.
     """
     result = _get_pipeline()
+    # Map each alert ID that is part of an incident to its incident ID
+    alert_incident_map: dict[str, str] = {}
+    for inc in result["incidents"]:
+        for a in inc["alerts"]:
+            alert_incident_map[a["id"]] = inc["id"]
+
     # Collect alerts from all incidents + unlinked
     all_alerts: list[dict] = []
     seen: set[str] = set()
@@ -676,24 +688,36 @@ def list_alerts(origin: Optional[str] = Query(default=None)) -> dict:
     if origin in ("manual", "seeded"):
         all_alerts = [a for a in all_alerts if a.get("origin") == origin]
 
-    return {
-        "alerts": [
-            {
-                "id": a["id"],
-                "timestamp": a["timestamp"],
-                "source": a["source"],
-                "severity": a["severity"],
-                "title": a["title"],
-                "description": a.get("description"),
-                "user": a.get("user"),
-                "host": a.get("host"),
-                "ip": a.get("ip"),
-                "resource": a.get("resource"),
-                "origin": a.get("origin", "seeded"),
-            }
-            for a in all_alerts
-        ]
-    }
+    alerts_out = []
+    for a in all_alerts:
+        aid = a["id"]
+        if aid in alert_incident_map:
+            inc_id = alert_incident_map[aid]
+            triage_val = "in_incident"
+        else:
+            inc_id = None
+            triage_val = pipeline_module.classify_unlinked(a)
+
+        if triage and triage_val != triage:
+            continue
+
+        alerts_out.append({
+            "id": a["id"],
+            "timestamp": a["timestamp"],
+            "source": a["source"],
+            "severity": a["severity"],
+            "title": a["title"],
+            "description": a.get("description"),
+            "user": a.get("user"),
+            "host": a.get("host"),
+            "ip": a.get("ip"),
+            "resource": a.get("resource"),
+            "origin": a.get("origin", "seeded"),
+            "incident_id": inc_id,
+            "triage": triage_val,
+        })
+
+    return {"alerts": alerts_out}
 
 
 # ---------------------------------------------------------------------------
@@ -736,3 +760,59 @@ def delete_alert(alert_id: str, analyst: str = Query(...)) -> dict:
         "deleted": alert_id,
         **_incident_list_payload(result),
     }
+
+
+# ---------------------------------------------------------------------------
+# Chatbot & Ungrouped Alerts
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+    analyst: Optional[str] = "analyst-1"
+
+    @field_validator("message")
+    @classmethod
+    def message_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("message must not be empty")
+        return v.strip()
+
+
+@app.get("/alerts/ungrouped")
+def list_ungrouped_alerts() -> dict:
+    """
+    List of ungrouped alerts (alerts not in any correlated incident).
+    Computed dynamically from real data with no hardcoded lists.
+    """
+    ungrouped = pipeline_module.get_ungrouped_alerts()
+    return {
+        "ungrouped_alerts": [
+            {
+                "id": a["id"],
+                "severity": a.get("severity", 1),
+                "title": a.get("title", ""),
+                "source": a.get("source", ""),
+                "timestamp": a.get("timestamp"),
+                "user": a.get("user"),
+                "host": a.get("host"),
+                "ip": a.get("ip"),
+                "triage": a.get("triage", "low_priority"),
+            }
+            for a in ungrouped
+        ],
+        "count": len(ungrouped),
+    }
+
+
+@app.post("/chat")
+def chat_endpoint(body: ChatRequest) -> dict:
+    """
+    Chatbot endpoint for diagnosing alerts, follow-up Q&A, and commands (list, help, group).
+    """
+    analyst_name = (body.analyst or "analyst-1").strip()
+    return chatbot_module.process_chat_message(
+        message=body.message,
+        session_id=body.session_id,
+        analyst=analyst_name,
+    )
