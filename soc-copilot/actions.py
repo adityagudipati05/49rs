@@ -135,12 +135,25 @@ def build_actions(
         # Resolve target from real incident entities
         target = _resolve_target(step, incident)
 
-        # Status comes from DB only — default is pending
+        # Status comes from DB with anchor validation — default is pending
         db_row = db_get_action_status(action_id)
-        if db_row:
-            status = db_row.get("decision", "pending")
-        else:
+        current_anchor = incident.get("anchor")
+        invalidation_reason = None
+
+        if not db_row:
             status = "pending"
+        else:
+            stored_anchor = db_row.get("incident_anchor")
+            if stored_anchor is None:
+                # NULL-anchor legacy rows: treat as pending
+                status = "pending"
+                invalidation_reason = "legacy approval (no anchor stored)"
+            elif stored_anchor != current_anchor:
+                # Stored anchor does not match current anchor
+                status = "pending"
+                invalidation_reason = "approval no longer matches incident (alerts changed)"
+            else:
+                status = db_row.get("decision", "pending")
 
         # Warnings only if real data supports them
         warnings = _generate_warnings(step, incident, assets)
@@ -157,6 +170,9 @@ def build_actions(
             "warnings": warnings,
             "playbook": playbook_name,
         }
+        if invalidation_reason:
+            card["approval_invalidated_reason"] = invalidation_reason
+
         cards.append(card)
 
     return cards

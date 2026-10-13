@@ -1,5 +1,12 @@
 """
 pipeline.py - Load, enrich, correlate, score, and build incidents.
+
+Changes in Phase 2:
+  - load_all() now merges seeded alerts (origin="seeded") with manual alerts
+    from the DB (origin="manual"). alerts.json is never written.
+  - build_pipeline() is wrapped in a module-level cache that is invalidated
+    by calling invalidate_pipeline_cache(). Callers (api.py) call invalidate
+    after inserting or deleting manual alerts.
 """
 import json
 import os
@@ -7,6 +14,15 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+# Module-level in-process cache.  None means "dirty, rebuild on next call".
+_PIPELINE_CACHE: Optional[dict] = None
+
+
+def invalidate_pipeline_cache() -> None:
+    """Mark the pipeline cache as dirty. Thread-safe for CPython (GIL protects assignment)."""
+    global _PIPELINE_CACHE
+    _PIPELINE_CACHE = None
 
 
 # ---------------------------------------------------------------------------
@@ -19,15 +35,34 @@ def load_json(filename: str) -> dict:
         return json.load(f)
 
 
-def load_all() -> tuple[list[dict], dict, dict, dict, dict]:
-    """Return (alerts, assets, users, intel, playbooks)."""
+def load_all(db_path: Optional[str] = None) -> tuple[list[dict], dict, dict, dict, dict]:
+    """
+    Return (alerts, assets, users, intel, playbooks).
+
+    alerts = seeded (from alerts.json, origin="seeded") +
+             manual  (from DB manual_alerts table, origin="manual").
+    alerts.json is NEVER written by this function or any caller.
+    """
+    import db as db_module
+
     alerts_data = load_json("alerts.json")
     assets_data = load_json("assets.json")
     users_data = load_json("users.json")
     intel_data = load_json("threat_intel.json")
     playbooks_data = load_json("playbooks.json")
+
+    seeded_alerts = alerts_data["alerts"]
+    # Tag seeded alerts without mutating the JSON-loaded originals
+    tagged_seeded = [dict(a, origin="seeded") for a in seeded_alerts]
+
+    # Merge manual alerts (already stored as full dicts in DB)
+    manual_rows = db_module.get_manual_alerts(db_path)
+    manual_alerts = [dict(a, origin="manual") for a in manual_rows]
+
+    all_alerts = tagged_seeded + manual_alerts
+
     return (
-        alerts_data["alerts"],
+        all_alerts,
         assets_data["assets"],
         users_data["users"],
         intel_data["intel"],
@@ -181,6 +216,9 @@ def _build_incident(inc_id: str, alerts: list[dict]) -> dict:
     resources = sorted({a.get("resource") for a in alerts if a.get("resource")})
     sources = sorted({a["source"] for a in alerts})
 
+    # anchor = earliest alert ID in the group — used for stable approval tracking
+    anchor = alerts[0]["id"]
+
     return {
         "id": inc_id,
         "alert_ids": [a["id"] for a in alerts],
@@ -194,6 +232,7 @@ def _build_incident(inc_id: str, alerts: list[dict]) -> dict:
         "sources": sources,
         "earliest": alerts[0]["timestamp"],
         "latest": alerts[-1]["timestamp"],
+        "anchor": anchor,  # earliest alert ID; stable across rescoring
     }
 
 
@@ -315,12 +354,21 @@ def compute_stats(
 # Main entry point — build everything
 # ---------------------------------------------------------------------------
 
-def build_pipeline() -> dict:
+def build_pipeline(db_path: Optional[str] = None) -> dict:
     """
     Run the full pipeline and return a dict with incidents, unlinked, stats.
     Incidents sorted by score descending.
+
+    When called with db_path=None (production), uses the module-level cache.
+    Tests pass db_path explicitly and bypass the cache.
     """
-    alerts, assets, users, intel, playbooks = load_all()
+    global _PIPELINE_CACHE
+
+    # Cache only applies to the production code-path (db_path=None)
+    if db_path is None and _PIPELINE_CACHE is not None:
+        return _PIPELINE_CACHE
+
+    alerts, assets, users, intel, playbooks = load_all(db_path)
 
     enriched = [enrich(a, assets, users, intel) for a in alerts]
     incidents, unlinked = correlate(enriched)
@@ -337,12 +385,17 @@ def build_pipeline() -> dict:
 
     stats = compute_stats(alerts, scored_incidents, unlinked)
 
-    return {
+    result = {
         "incidents": scored_incidents,
         "unlinked": unlinked,
         "stats": stats,
         "playbooks": playbooks,
     }
+
+    if db_path is None:
+        _PIPELINE_CACHE = result
+
+    return result
 
 
 if __name__ == "__main__":
