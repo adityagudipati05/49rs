@@ -92,6 +92,13 @@ export default function IncidentQueue() {
         </div>
       )}
 
+      {/* Queue summary banner */}
+      {stats && (
+        <div className="queue-banner" id="queue-banner">
+          {`${stats.total_alerts} alerts -> ${stats.incident_count} incidents, ${stats.needs_review_count ?? 0} need review, ${stats.low_priority_count ?? 0} low priority`}
+        </div>
+      )}
+
       {/* Stat boxes */}
       {loading && !data ? (
         <div className="stat-grid">

@@ -101,3 +101,22 @@ export async function deleteAlert(alertId, analyst) {
   return res;
 }
 
+// GET /alerts/ungrouped
+export async function fetchUngroupedAlerts() {
+  const res = await request('GET', '/alerts/ungrouped');
+  if (!res.ok) throw new Error(`GET /alerts/ungrouped failed: ${res.status}`);
+  return res.json();
+}
+
+// POST /chat
+export async function sendChatMessage(message, sessionId, analyst = 'analyst-1') {
+  const res = await request('POST', '/chat', {
+    body: { message, session_id: sessionId, analyst },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Chat error (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+

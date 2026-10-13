@@ -56,6 +56,15 @@ function IncidentIcon() {
   );
 }
 
+// Chat/Diagnose icon
+function ChatIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
 export default function Sidebar() {
   const params = useParams();
   const currentId = params.id;
@@ -92,6 +101,15 @@ export default function Sidebar() {
         >
           <BellAlertIcon />
           Alerts
+        </NavLink>
+
+        <NavLink
+          to="/diagnose"
+          className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
+          id="nav-diagnose"
+        >
+          <ChatIcon />
+          Diagnose
         </NavLink>
 
         <NavLink

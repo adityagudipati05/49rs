@@ -67,6 +67,7 @@ export default function Alerts() {
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [triageFilter, setTriageFilter] = useState('all');
   const [originFilter, setOriginFilter] = useState('all');
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM);

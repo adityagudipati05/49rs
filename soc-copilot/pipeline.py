@@ -318,8 +318,29 @@ def score_incident(incident: dict) -> tuple[int, str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Summary stats
+# Per-alert triage classification & summary stats
 # ---------------------------------------------------------------------------
+
+def classify_unlinked(alert: dict) -> str:
+    """
+    Classify an unlinked alert as 'needs_review' or 'low_priority'.
+    needs_review if severity >= 3 OR alert["intel"] verdict is 'malicious' or 'suspicious'.
+    Otherwise low_priority. Missing intel is not suspicious.
+    """
+    sev = alert.get("severity")
+    if sev is not None:
+        try:
+            if int(sev) >= 3:
+                return "needs_review"
+        except (ValueError, TypeError):
+            pass
+
+    intel = alert.get("intel")
+    if isinstance(intel, dict) and intel.get("verdict") in ("malicious", "suspicious"):
+        return "needs_review"
+
+    return "low_priority"
+
 
 def compute_stats(
     all_alerts: list[dict],
@@ -328,7 +349,7 @@ def compute_stats(
 ) -> dict:
     """
     Compute summary stats from actual results. No hardcoding.
-    noise_reduction_pct = fraction of alerts NOT in any incident.
+    noise_reduction_pct = fraction of alerts classified as low_priority.
     """
     total_alerts = len(all_alerts)
     incident_count = len(incidents)
@@ -337,8 +358,13 @@ def compute_stats(
     for inc in incidents:
         incident_alert_ids.update(inc["alert_ids"])
     unlinked_count = len(unlinked)
-    noise_alerts_count = total_alerts - len(incident_alert_ids)
-    noise_reduction_pct = (noise_alerts_count / total_alerts * 100) if total_alerts > 0 else 0.0
+
+    needs_review_count = sum(1 for a in unlinked if classify_unlinked(a) == "needs_review")
+    low_priority_count = sum(1 for a in unlinked if classify_unlinked(a) == "low_priority")
+
+    # noise_reduction_pct must count ONLY low_priority alerts as noise
+    noise_alerts_count = low_priority_count
+    noise_reduction_pct = (low_priority_count / total_alerts * 100) if total_alerts > 0 else 0.0
 
     return {
         "total_alerts": total_alerts,
@@ -347,6 +373,8 @@ def compute_stats(
         "alerts_in_incidents": len(incident_alert_ids),
         "noise_alerts_count": noise_alerts_count,
         "noise_reduction_pct": round(noise_reduction_pct, 1),
+        "needs_review_count": needs_review_count,
+        "low_priority_count": low_priority_count,
     }
 
 
@@ -383,6 +411,15 @@ def build_pipeline(db_path: Optional[str] = None) -> dict:
 
     scored_incidents.sort(key=lambda x: x["score"], reverse=True)
 
+    for inc in scored_incidents:
+        for a in inc["alerts"]:
+            a["incident_id"] = inc["id"]
+            a["triage"] = "in_incident"
+
+    for a in unlinked:
+        a["incident_id"] = None
+        a["triage"] = classify_unlinked(a)
+
     stats = compute_stats(alerts, scored_incidents, unlinked)
 
     result = {
@@ -396,6 +433,15 @@ def build_pipeline(db_path: Optional[str] = None) -> dict:
         _PIPELINE_CACHE = result
 
     return result
+
+
+def get_ungrouped_alerts(db_path: Optional[str] = None) -> list[dict]:
+    """
+    Return all ungrouped alerts (alerts not in any correlated incident).
+    Computed dynamically from pipeline execution with no hardcoded lists.
+    """
+    result = build_pipeline(db_path)
+    return result.get("unlinked", [])
 
 
 if __name__ == "__main__":
