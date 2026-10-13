@@ -41,6 +41,9 @@ def _split_sentences(text: str) -> list[str]:
     """
     # Replace newlines with spaces for uniform processing
     text = text.replace("\n", " ")
+    # Move post-period citations to before the period so they are attached to their sentence.
+    # e.g. "Foo. [A-006] Bar." → "Foo [A-006]. Bar."
+    text = re.sub(r"([.!?])\s+((?:\[A-\d{3,}\])+)", r" \2\1", text)
     # Split on sentence boundaries
     parts = re.split(r"(?<=[.!?])\s+", text)
     return [p.strip() for p in parts if p.strip()]

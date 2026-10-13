@@ -133,3 +133,32 @@ class TestEdgeCases:
         ]
         result = validate(CLEAN_SUMMARY, VALID_IDS, timeline=timeline)
         assert result["timeline_invalid_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# Citations after period (Task 2)
+# ---------------------------------------------------------------------------
+
+class TestCitationAfterPeriod:
+    def test_citations_after_period_both_cited_passes(self):
+        text = "Spawned PowerShell. [A-006] Then it beaconed out. [A-008]"
+        res = validate(text, ["A-006", "A-008"])
+        assert res["passed"] is True
+
+    def test_citations_before_period_both_cited_passes(self):
+        text = "Spawned PowerShell [A-006]. Then it beaconed out [A-008]."
+        res = validate(text, ["A-006", "A-008"])
+        assert res["passed"] is True
+
+    def test_second_sentence_uncited_fails(self):
+        text = "Spawned PowerShell. [A-006] Then it beaconed out."
+        res = validate(text, ["A-006", "A-008"])
+        assert res["passed"] is False
+        assert res["uncited_sentences"] == ["Then it beaconed out."]
+
+    def test_invalid_citation_after_period_fails(self):
+        text = "Spawned PowerShell. [A-099]"
+        res = validate(text, ["A-006"])
+        assert res["passed"] is False
+        assert res["invalid_citations"] == ["A-099"]
+

@@ -1,0 +1,52 @@
+{
+  "_meta": {
+    "model": "openai/gpt-oss-120b",
+    "timestamp": "2026-10-13T07:38:40Z",
+    "payload_hash": "8fef50e6c16a35eb1c10a30a0bbd4d83231443fb43008808a6626d7b08000dc0"
+  },
+  "response": {
+    "title": "Potential Account Takeover of priya.sharma",
+    "summary": "User priya.sharma exhibited impossible travel by logging in from Mumbai, India and then Frankfurt, Germany within 23 minutes, indicating potential credential compromise [A-001]. Subsequently, the attacker changed the MFA method from TOTP to SMS, a deviation from the user's normal behavior [A-002]. A new mailbox forwarding rule was created to forward all mail to an external address, suggesting persistence [A-003]. Login from a previously unseen device further supports unauthorized access [A-004]. Finally, a large volume of emails was exported via IMAP, representing possible data exfiltration [A-005].",
+    "timeline": [
+      {
+        "time": "2024-10-10T08:00:00Z",
+        "event": "Impossible travel login from Mumbai to Frankfurt detected",
+        "source_id": "A-001",
+        "attack_stage": "Credential Access"
+      },
+      {
+        "time": "2024-10-10T08:35:00Z",
+        "event": "MFA method changed from TOTP to SMS",
+        "source_id": "A-002",
+        "attack_stage": "Privilege Escalation"
+      },
+      {
+        "time": "2024-10-10T09:02:00Z",
+        "event": "New mailbox forwarding rule added to external address",
+        "source_id": "A-003",
+        "attack_stage": "Persistence"
+      },
+      {
+        "time": "2024-10-10T09:18:00Z",
+        "event": "Login from previously unseen device fingerprint",
+        "source_id": "A-004",
+        "attack_stage": "Initial Access"
+      },
+      {
+        "time": "2024-10-10T09:35:00Z",
+        "event": "Large email export via IMAP (4,821 messages)",
+        "source_id": "A-005",
+        "attack_stage": "Exfiltration"
+      }
+    ],
+    "recommended_playbook": "compromised_account",
+    "playbook_reasoning": "The sequence of alerts shows classic signs of an account takeover: anomalous geographic logins, MFA method alteration, creation of forwarding rules for persistence, login from an unknown device, and massive email export, all tied to the same user account, matching the compromised_account playbook.",
+    "confidence": "high",
+    "unknowns": [
+      "host information",
+      "asset information",
+      "exact initial compromise vector",
+      "whether TOR network was used"
+    ]
+  }
+}

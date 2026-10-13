@@ -49,6 +49,13 @@ export async function triggerSummary(id) {
   return res; // return raw response so caller can check status
 }
 
+// GET /incidents/{id}/case-note
+export async function fetchCaseNote(id) {
+  const res = await request('GET', `/incidents/${encodeURIComponent(id)}/case-note`);
+  if (!res.ok) throw new Error(`GET /incidents/${id}/case-note failed: ${res.status}`);
+  return res.json();
+}
+
 // POST /actions/{action_id}/decision
 export async function postDecision(actionId, decision, analyst, comment) {
   const res = await request('POST', `/actions/${encodeURIComponent(actionId)}/decision`, {

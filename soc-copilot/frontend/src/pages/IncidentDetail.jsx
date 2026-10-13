@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { fetchIncident, triggerSummary, API_BASE } from '../api.js';
+import { fetchIncident, triggerSummary, fetchCaseNote, API_BASE } from '../api.js';
 import RiskBadge from '../components/RiskBadge.jsx';
 import CitedSummary from '../components/CitedSummary.jsx';
 import VerificationBadge from '../components/VerificationBadge.jsx';
@@ -66,6 +66,8 @@ export default function IncidentDetail() {
   const [error, setError] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(null);
+  const [caseNoteLoading, setCaseNoteLoading] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
   const [analyst, setAnalyst] = useState('analyst-1');
   const rawAlertsRef = useRef(null);
 
@@ -99,6 +101,40 @@ export default function IncidentDetail() {
       setSummaryError(`Network error: ${err.message}`);
     } finally {
       setSummaryLoading(false);
+    }
+  }
+
+  async function handleCopyCaseNote() {
+    setCaseNoteLoading(true);
+    try {
+      const res = await fetchCaseNote(id);
+      await navigator.clipboard.writeText(res.markdown);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) {
+      alert(`Failed to copy case note: ${err.message}`);
+    } finally {
+      setCaseNoteLoading(false);
+    }
+  }
+
+  async function handleDownloadCaseNote() {
+    setCaseNoteLoading(true);
+    try {
+      const res = await fetchCaseNote(id);
+      const blob = new Blob([res.markdown], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${id}-case-note.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Failed to download case note: ${err.message}`);
+    } finally {
+      setCaseNoteLoading(false);
     }
   }
 
@@ -202,17 +238,56 @@ export default function IncidentDetail() {
             Score: {data.score} &nbsp;|&nbsp; {(data.sources || []).join(', ')} &nbsp;|&nbsp; {data.alert_ids?.length || 0} alerts
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={load}
-          disabled={loading}
-          id="refresh-detail"
-          aria-label="Refresh incident data"
-        >
-          <RefreshIcon /> Refresh
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleCopyCaseNote}
+            disabled={caseNoteLoading}
+            id="copy-case-note"
+            aria-label="Copy case note markdown"
+          >
+            {copySuccess ? 'Copied!' : 'Copy case note'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleDownloadCaseNote}
+            disabled={caseNoteLoading}
+            id="download-case-note"
+            aria-label="Download case note markdown"
+          >
+            Download .md
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={load}
+            disabled={loading}
+            id="refresh-detail"
+            aria-label="Refresh incident data"
+          >
+            <RefreshIcon /> Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Prompt Injection Warning Banner */}
+      {data.injection_findings && data.injection_findings.length > 0 && (
+        <div
+          className="warning-banner"
+          role="alert"
+          style={{ marginBottom: 16, borderLeft: '4px solid #ef4444' }}
+          id="injection-warning-banner"
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <WarnIcon />
+            <strong>
+              Possible prompt injection detected in {Array.from(new Set(data.injection_findings.map(f => f.alert_id))).join(', ')}. Alert text was treated as data, not instructions.
+            </strong>
+          </span>
+        </div>
+      )}
 
       {/* Two-column detail layout */}
       <div className="detail-layout">
@@ -268,6 +343,22 @@ export default function IncidentDetail() {
               </div>
             ) : (
               <div>
+                {summary.demo_source && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--text-muted)',
+                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      display: 'inline-block',
+                      marginBottom: 10,
+                    }}
+                    id="demo-source-label"
+                  >
+                    Pre-generated demo summary (real LLM output)
+                  </div>
+                )}
                 {summary.title && (
                   <div className="card-title" style={{ marginBottom: 10 }}>{summary.title}</div>
                 )}
@@ -310,9 +401,11 @@ export default function IncidentDetail() {
           </div>
 
           {/* Timeline */}
-          {summaryAvailable && summary.timeline && summary.timeline.length > 0 && (
-            <TimelineTable timeline={summary.timeline} />
-          )}
+          {summaryAvailable && summary.timeline && summary.timeline.length > 0 ? (
+            <TimelineTable timeline={summary.timeline} isBasic={false} />
+          ) : (data.timeline_basic && data.timeline_basic.length > 0 ? (
+            <TimelineTable timeline={data.timeline_basic} isBasic={true} />
+          ) : null)}
 
           {/* Context (mobile — shows below summary, before raw alerts) */}
           <div style={{ display: 'none' }} className="context-mobile">

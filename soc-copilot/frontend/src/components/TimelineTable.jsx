@@ -3,12 +3,19 @@
  * Columns: Time, Event, Source, Stage.
  * Only rendered when summary is available and timeline is non-empty.
  */
-export default function TimelineTable({ timeline }) {
+export default function TimelineTable({ timeline, isBasic = false }) {
   if (!timeline || timeline.length === 0) return null;
 
   return (
     <div>
-      <h2 className="section-heading" style={{ marginBottom: 12 }}>Attack Timeline</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+        <h2 className="section-heading" style={{ marginBottom: 0 }}>Attack Timeline</h2>
+        {isBasic && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }} id="timeline-basic-label">
+            Built from alert timestamps (not AI)
+          </span>
+        )}
+      </div>
       <div className="data-table-wrap">
         <table className="data-table" aria-label="Attack timeline">
           <thead>
