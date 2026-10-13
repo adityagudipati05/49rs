@@ -1,0 +1,111 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "generator": "generate_data.py",
+    "seed": 42
+  },
+  "assets": {
+    "FIN-WS-22": {
+      "criticality": 4,
+      "owner": "finance-team",
+      "env": "production",
+      "os": "Windows 11"
+    },
+    "s3://finance-reports": {
+      "criticality": 4,
+      "owner": "data-eng",
+      "env": "production",
+      "os": "AWS S3"
+    },
+    "BACKUP-SRV-01": {
+      "criticality": 3,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Ubuntu 22.04"
+    },
+    "CI-SRV-01": {
+      "criticality": 2,
+      "owner": "devops",
+      "env": "staging",
+      "os": "Ubuntu 20.04"
+    },
+    "MON-SRV-01": {
+      "criticality": 2,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "CentOS 8"
+    },
+    "DEV-WS-99": {
+      "criticality": 1,
+      "owner": "r-and-d",
+      "env": "development",
+      "os": "macOS 14"
+    },
+    "NOISE-WS-01": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-02": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-03": {
+      "criticality": 2,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-04": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-05": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-06": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-07": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-08": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-09": {
+      "criticality": 2,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-10": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    },
+    "NOISE-WS-11": {
+      "criticality": 1,
+      "owner": "it-ops",
+      "env": "production",
+      "os": "Windows 10"
+    }
+  }
+}

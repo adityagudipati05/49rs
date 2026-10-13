@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "generator": "generate_data.py",
+    "seed": 42
+  },
+  "playbooks": {
+    "compromised_account": {
+      "name": "Compromised Account Response",
+      "description": "Respond to a suspected compromised user account.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "disable_account",
+          "target_field": "user",
+          "impact": "User cannot log in. All active sessions will be terminated on next check.",
+          "risk": "Business disruption if wrong user targeted."
+        },
+        {
+          "id": "S2",
+          "action": "revoke_sessions",
+          "target_field": "user",
+          "impact": "All OAuth tokens and session cookies invalidated immediately.",
+          "risk": "Low. User re-authenticates on next access."
+        },
+        {
+          "id": "S3",
+          "action": "block_ip",
+          "target_field": "ip",
+          "impact": "IP blocked at perimeter firewall for 72 hours.",
+          "risk": "May block shared NAT; review IP reputation before confirming."
+        }
+      ]
+    },
+    "malware_host": {
+      "name": "Malware Host Containment",
+      "description": "Isolate and remediate a host with confirmed malware activity.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "isolate_host",
+          "target_field": "host",
+          "impact": "Host removed from network. Users lose access. Forensic collection triggered.",
+          "risk": "High operational impact if production system."
+        },
+        {
+          "id": "S2",
+          "action": "kill_process",
+          "target_field": "host",
+          "impact": "Malicious process terminated. May trigger cleanup routine if rootkit present.",
+          "risk": "Medium. Process termination may cause data loss if legitimate app co-located."
+        },
+        {
+          "id": "S3",
+          "action": "block_ip",
+          "target_field": "ip",
+          "impact": "C2 IP blocked at perimeter firewall for 72 hours.",
+          "risk": "Low. IP is external C2; blocking is safe."
+        }
+      ]
+    },
+    "cloud_exposure": {
+      "name": "Cloud Data Exposure Response",
+      "description": "Remediate an exposed cloud storage bucket and revoke compromised credentials.",
+      "steps": [
+        {
+          "id": "S1",
+          "action": "make_bucket_private",
+          "target_field": "host",
+          "impact": "S3 bucket ACL reverted to private. Public access blocked.",
+          "risk": "Low. May break public CDN links if any exist."
+        },
+        {
+          "id": "S2",
+          "action": "revoke_access_key",
+          "target_field": "host",
+          "impact": "IAM access key deactivated. Services using this key will fail.",
+          "risk": "High if key is used by production automation. Verify before revoking."
+        },
+        {
+          "id": "S3",
+          "action": "block_ip",
+          "target_field": "ip",
+          "impact": "Exfiltrating IP blocked at perimeter and WAF for 72 hours.",
+          "risk": "Low. IP is external unknown; blocking is appropriate."
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "generator": "generate_data.py",
+    "seed": 42
+  },
+  "intel": {
+    "185.220.101.7": {
+      "verdict": "malicious",
+      "confidence": 0.95,
+      "tags": [
+        "tor-exit-node",
+        "account-takeover"
+      ]
+    },
+    "45.9.148.12": {
+      "verdict": "malicious",
+      "confidence": 0.98,
+      "tags": [
+        "c2",
+        "malware",
+        "cobalt-strike"
+      ]
+    },
+    "103.77.42.19": {
+      "verdict": "suspicious",
+      "confidence": 0.75,
+      "tags": [
+        "data-exfiltration",
+        "unknown-asn"
+      ]
+    },
+    "10.0.1.101": {
+      "verdict": "benign",
+      "confidence": 1.0,
+      "tags": [
+        "internal-scanner"
+      ]
+    },
+    "10.0.1.102": {
+      "verdict": "benign",
+      "confidence": 1.0,
+      "tags": [
+        "internal-scanner"
+      ]
+    }
+  }
+}

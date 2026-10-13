@@ -1,0 +1,141 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "generator": "generate_data.py",
+    "seed": 42
+  },
+  "users": {
+    "priya.sharma": {
+      "role": "Finance Analyst",
+      "privilege": 3,
+      "dept": "Finance",
+      "usual_country": "IN"
+    },
+    "admin.ops": {
+      "role": "IT Administrator",
+      "privilege": 4,
+      "dept": "IT Operations",
+      "usual_country": "US"
+    },
+    "svc.backup": {
+      "role": "Service Account",
+      "privilege": 2,
+      "dept": "IT Operations",
+      "usual_country": "US"
+    },
+    "svc.monitor": {
+      "role": "Service Account",
+      "privilege": 1,
+      "dept": "IT Operations",
+      "usual_country": "US"
+    },
+    "svc.deploy": {
+      "role": "Service Account",
+      "privilege": 2,
+      "dept": "DevOps",
+      "usual_country": "US"
+    },
+    "ops.cloud": {
+      "role": "Cloud Engineer",
+      "privilege": 3,
+      "dept": "Infrastructure",
+      "usual_country": "US"
+    },
+    "hr.alice": {
+      "role": "HR Generalist",
+      "privilege": 2,
+      "dept": "Human Resources",
+      "usual_country": "US"
+    },
+    "noise.user01": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user02": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user03": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user04": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user05": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user06": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user07": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user08": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user09": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user10": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user11": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user12": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user13": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user14": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    },
+    "noise.user15": {
+      "role": "Employee",
+      "privilege": 1,
+      "dept": "General",
+      "usual_country": "US"
+    }
+  }
+}
